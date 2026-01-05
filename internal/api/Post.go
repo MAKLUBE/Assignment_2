@@ -1,76 +1,93 @@
 package api
 
 import (
-	"context"
-	"fmt"
-	"html/template"
-	"log"
 	"net/http"
+	"strconv"
 	"sync"
-	"time"
+
+	"Assignment2/internal/model"
+	"Assignment2/internal/queue"
+	"Assignment2/internal/store"
 )
+
+type Handler struct {
+	Store *store.Store
+	Queue *queue.Queue[*model.Task]
+}
 
 var (
-	data    = make(map[string]string)
-	mu      sync.Mutex
-	logChan = make(chan string, 100)
+	idCounter int
+	idMu      sync.Mutex
 )
 
-var templates = template.Must(template.ParseFiles("index.html", "logs.html"))
-
-func IndexHandler(w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	if r.Method == http.MethodPost {
-		id := r.FormValue("id")
-		value := r.FormValue("value")
-
-		if id != "" && value != "" {
-			data[id] = value
-			logChan <- fmt.Sprintf("Post Request done/ addId %v", id)
-		}
-	}
-
-	templates.ExecuteTemplate(w, "index.html", data)
+func nextID() string {
+	idMu.Lock()
+	defer idMu.Unlock()
+	idCounter++
+	return strconv.Itoa(idCounter)
 }
 
-func deleteHandler(w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	if r.Method == http.MethodPost {
-		go func() {
-			time.Sleep(1 * time.Second)
-			mu.Lock()
-			datalen := len(data)
-			data = make(map[string]string)
-			logChan <- fmt.Sprintf("DELETE called/ Date deleted %v items", datalen)
-			defer mu.Unlock()
-		}()
+func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
 
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	payload := r.FormValue("payload")
+	if payload == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("payload is required"))
+		return
+	}
+
+	task := &model.Task{
+		Id:      nextID(),
+		Payload: payload,
+		Status:  model.Pending,
+	}
+
+	h.Store.Add(task)
+	h.Queue.Push(task)
+
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("task created with id " + task.ID))
 }
 
-func logsHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case logMsg := <-logChan:
-		templates.ExecuteTemplate(w, "logs.html", logMsg)
-	default:
-		templates.ExecuteTemplate(w, "logs.html", "no new logs")
+// GET /tasks
+func (h *Handler) GetTasks(w http.ResponseWriter, r *http.Request) {
+	for _, task := range h.Store.GetAll() {
+		w.Write([]byte(
+			"ID: " + task.ID +
+				" | Status: " + string(task.Status) + "\n",
+		))
 	}
-
 }
 
-func startLogger(ctx context.Context) {
-	for {
-		select {
-		case logMsg := <-logChan:
-			log.Println(logMsg)
-		case <-ctx.Done():
-			log.Println("shutting down logger")
-			return
-		}
+// GET /tasks/{id}
+func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Path[len("/tasks/"):]
+
+	task, ok := h.Store.Get(id)
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("task not found"))
+		return
 	}
+
+	w.Write([]byte(
+		"ID: " + task.ID +
+			"\nPayload: " + task.Payload +
+			"\nStatus: " + string(task.Status),
+	))
+}
+
+// GET /stats
+func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	sub, prog, done := h.Store.Stats()
+
+	w.Write([]byte(
+		"submitted: " + strconv.Itoa(sub) + "\n" +
+			"in_progress: " + strconv.Itoa(prog) + "\n" +
+			"completed: " + strconv.Itoa(done),
+	))
 }

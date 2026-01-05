@@ -2,49 +2,82 @@ package main
 
 import (
 	"context"
-	"github.com/MAKLUBE/Assignment_2/internal/api"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"Assignment2/internal/api"
+	"Assignment2/internal/model"
+	"Assignment2/internal/queue"
+	"Assignment2/internal/store"
+	"Assignment2/internal/worker"
 )
 
 func main() {
-	_, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	http.HandleFunc("/", IndexHandler)
-	http.HandleFunc("/tasks", Handler)
-	http.HandleFunc("/stats", logsHandler)
+	taskStore := store.NewTaskStore()
+	taskQueue := queue.NewQueue
+	stopChan := make(chan struct{})
+
+	handler := &api.Handler{
+		Store: taskStore,
+		Queue: taskQueue,
+	}
+
+	worker.StartWorker(1, taskQueue.Channel(), stopChan)
+	worker.StartWorker(2, taskQueue.Channel(), stopChan)
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				s, ip, d := taskStore.Stats()
+				log.Printf(
+					"monitor: submitted=%d in_progress=%d done=%d",
+					s, ip, d,
+				)
+			case <-stopChan:
+				return
+			}
+		}
+	}()
+
+	http.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			handler.CreateTask(w, r)
+		} else {
+			handler.GetTasks(w, r)
+		}
+	})
+
+	http.HandleFunc("/tasks/", handler.GetTask)
+	http.HandleFunc("/stats", handler.Stats)
 
 	server := &http.Server{
 		Addr: ":8080",
 	}
 
 	go func() {
-		log.Println("Starting server on port 8080")
-		err := server.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed to start %w", err)
-		}
+		log.Println("server started on :8080")
+		server.ListenAndServe()
 	}()
 
-	//graceful shutdown
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
-	<-signalChan
-	log.Println("Shutting down server")
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	<-sig
 
-	cancel()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	err := server.Shutdown(shutdownCtx)
-	if err != nil {
-		log.Fatalf("Server failed to shutdown %w", err)
-	}
+	close(stopChan)
+	taskQueue.Close()
 
-	log.Println("Server gracefully shutdown complete")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	server.Shutdown(ctx)
 
+	log.Println("server stopped gracefully")
 }
