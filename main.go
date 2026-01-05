@@ -9,19 +9,17 @@ import (
 	"syscall"
 	"time"
 
-	"Assignment2/internal/api"
-	"Assignment2/internal/model"
-	"Assignment2/internal/queue"
-	"Assignment2/internal/store"
-	"Assignment2/internal/worker"
+	"github.com/MAKLUBE/Assignment_2/internal/api"
+	"github.com/MAKLUBE/Assignment_2/internal/queue"
+	"github.com/MAKLUBE/Assignment_2/internal/store"
+	"github.com/MAKLUBE/Assignment_2/internal/worker"
 )
 
 func main() {
-
-	taskStore := store.NewTaskStore()
-	taskQueue := queue.NewQueue
+	taskStore := store.NewStore()
 	stopChan := make(chan struct{})
-
+	taskQueue := queue.NewQueue
+	
 	handler := &api.Handler{
 		Store: taskStore,
 		Queue: taskQueue,
@@ -30,6 +28,7 @@ func main() {
 	worker.StartWorker(1, taskQueue.Channel(), stopChan)
 	worker.StartWorker(2, taskQueue.Channel(), stopChan)
 
+	// monitor
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -37,11 +36,7 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				s, ip, d := taskStore.Stats()
-				log.Printf(
-					"monitor: submitted=%d in_progress=%d done=%d",
-					s, ip, d,
-				)
+				log.Println("monitor: tasks =", len(taskStore.GetAll()))
 			case <-stopChan:
 				return
 			}
@@ -64,7 +59,7 @@ func main() {
 	}
 
 	go func() {
-		log.Println("server started on :8080")
+		log.Println("Server started on :8080")
 		server.ListenAndServe()
 	}()
 
@@ -73,11 +68,10 @@ func main() {
 	<-sig
 
 	close(stopChan)
-	taskQueue.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	server.Shutdown(ctx)
 
-	log.Println("server stopped gracefully")
+	log.Println("Server stopped gracefully")
 }

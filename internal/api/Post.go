@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"sync"
 
-	"Assignment2/internal/model"
-	"Assignment2/internal/queue"
-	"Assignment2/internal/store"
+	"github.com/MAKLUBE/Assignment_2/internal/model"
+	"github.com/MAKLUBE/Assignment_2/internal/queue"
+	"github.com/MAKLUBE/Assignment_2/internal/store"
 )
 
 type Handler struct {
@@ -20,13 +20,14 @@ var (
 	idMu      sync.Mutex
 )
 
-func nextID() string {
+func nextID() int {
 	idMu.Lock()
 	defer idMu.Unlock()
 	idCounter++
-	return strconv.Itoa(idCounter)
+	return idCounter
 }
 
+// POST /tasks
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -50,15 +51,15 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	h.Queue.Push(task)
 
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("task created with id " + task.ID))
+	w.Write([]byte("task created with id " + strconv.Itoa(task.Id)))
 }
 
 // GET /tasks
 func (h *Handler) GetTasks(w http.ResponseWriter, r *http.Request) {
 	for _, task := range h.Store.GetAll() {
 		w.Write([]byte(
-			"ID: " + task.ID +
-				" | Status: " + string(task.Status) + "\n",
+			"id=" + strconv.Itoa(task.Id) +
+				" status=" + string(task.Status) + "\n",
 		))
 	}
 }
@@ -75,7 +76,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write([]byte(
-		"ID: " + task.ID +
+		"ID: " + strconv.Itoa(task.Id) +
 			"\nPayload: " + task.Payload +
 			"\nStatus: " + string(task.Status),
 	))
@@ -83,11 +84,22 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 
 // GET /stats
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
-	sub, prog, done := h.Store.Stats()
+	all := h.Store.GetAll()
+
+	var submitted, inProgress, done int
+	for _, t := range all {
+		submitted++
+		if t.Status == model.InProgress {
+			inProgress++
+		}
+		if t.Status == model.Done {
+			done++
+		}
+	}
 
 	w.Write([]byte(
-		"submitted: " + strconv.Itoa(sub) + "\n" +
-			"in_progress: " + strconv.Itoa(prog) + "\n" +
-			"completed: " + strconv.Itoa(done),
+		"submitted: " + strconv.Itoa(submitted) + "\n" +
+			"in_progress: " + strconv.Itoa(inProgress) + "\n" +
+			"done: " + strconv.Itoa(done),
 	))
 }
