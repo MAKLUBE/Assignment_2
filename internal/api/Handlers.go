@@ -6,13 +6,12 @@ import (
 	"sync"
 
 	"github.com/MAKLUBE/Assignment_2/internal/model"
-	"github.com/MAKLUBE/Assignment_2/internal/queue"
 	"github.com/MAKLUBE/Assignment_2/internal/store"
 )
 
 type Handler struct {
-	Store *store.Store
-	Queue *queue.Queue[*model.Task]
+	Store *store.Store[string, *model.Task]
+	Queue chan *model.Task
 }
 
 var (
@@ -20,14 +19,13 @@ var (
 	idMu      sync.Mutex
 )
 
-func nextID() int {
+func nextID() string {
 	idMu.Lock()
 	defer idMu.Unlock()
 	idCounter++
-	return idCounter
+	return strconv.Itoa(idCounter)
 }
 
-// POST /tasks
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -37,7 +35,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	payload := r.FormValue("payload")
 	if payload == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("payload is required"))
+		w.Write([]byte("payload required"))
 		return
 	}
 
@@ -47,42 +45,37 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Status:  model.Pending,
 	}
 
-	h.Store.Add(task)
-	h.Queue.Push(task)
+	h.Store.Add(task.Id, task)
+	h.Queue <- task
 
-	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("task created with id " + strconv.Itoa(task.Id)))
+	w.Write([]byte("task created with id " + task.Id))
 }
 
-// GET /tasks
 func (h *Handler) GetTasks(w http.ResponseWriter, r *http.Request) {
 	for _, task := range h.Store.GetAll() {
 		w.Write([]byte(
-			"id=" + strconv.Itoa(task.Id) +
-				" status=" + string(task.Status) + "\n",
+			"ID=" + task.Id +
+				" STATUS=" + string(task.Status) + "\n",
 		))
 	}
 }
 
-// GET /tasks/{id}
 func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Path[len("/tasks/"):]
 
 	task, ok := h.Store.Get(id)
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("task not found"))
 		return
 	}
 
 	w.Write([]byte(
-		"ID: " + strconv.Itoa(task.Id) +
+		"ID: " + task.Id +
 			"\nPayload: " + task.Payload +
 			"\nStatus: " + string(task.Status),
 	))
 }
 
-// GET /stats
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	all := h.Store.GetAll()
 

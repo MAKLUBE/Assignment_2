@@ -9,7 +9,7 @@ const (
 )
 
 type Task struct {
-	Id      int
+	Id      string
 	Status  TaskStatus
 	Payload string
 }

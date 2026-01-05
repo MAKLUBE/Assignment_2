@@ -1,47 +1,26 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/MAKLUBE/Assignment_2/internal/api"
-	"github.com/MAKLUBE/Assignment_2/internal/queue"
+	"github.com/MAKLUBE/Assignment_2/internal/model"
 	"github.com/MAKLUBE/Assignment_2/internal/store"
 	"github.com/MAKLUBE/Assignment_2/internal/worker"
 )
 
 func main() {
-	taskStore := store.NewStore()
-	stopChan := make(chan struct{})
-	taskQueue := queue.NewQueue
-	
+	taskStore := store.NewStore[string, *model.Task]()
+	taskQueue := make(chan *model.Task, 10)
+
 	handler := &api.Handler{
 		Store: taskStore,
 		Queue: taskQueue,
 	}
 
-	worker.StartWorker(1, taskQueue.Channel(), stopChan)
-	worker.StartWorker(2, taskQueue.Channel(), stopChan)
-
-	// monitor
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				log.Println("monitor: tasks =", len(taskStore.GetAll()))
-			case <-stopChan:
-				return
-			}
-		}
-	}()
+	worker.StartWorker(1, taskQueue)
+	worker.StartWorker(2, taskQueue)
 
 	http.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -50,28 +29,9 @@ func main() {
 			handler.GetTasks(w, r)
 		}
 	})
-
 	http.HandleFunc("/tasks/", handler.GetTask)
 	http.HandleFunc("/stats", handler.Stats)
 
-	server := &http.Server{
-		Addr: ":8080",
-	}
-
-	go func() {
-		log.Println("Server started on :8080")
-		server.ListenAndServe()
-	}()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	<-sig
-
-	close(stopChan)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	server.Shutdown(ctx)
-
-	log.Println("Server stopped gracefully")
+	log.Println("server started on :8080")
+	http.ListenAndServe(":8080", nil)
 }
